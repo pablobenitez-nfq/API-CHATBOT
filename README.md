@@ -44,12 +44,3 @@ setup needs a backend that keeps the key server-side.
 The app has a "Ver código" tab that shows the exact JSX source of
 `Chatbot.jsx` (imported live via Vite's `?raw`, so it never drifts from the
 running code) next to an equivalent, curated Python snippet.
-
-## What's next
-
-- **Fase 2**: tool use, native web search, extended thinking, image/PDF
-  upload with citations — each as its own toggle in the chat, with its own
-  snippet in the code panel.
-- **Fase 3**: a prompt-evaluation playground.
-
-Both phases will get their own SDD cycle (spec/design/tasks) when addressed.

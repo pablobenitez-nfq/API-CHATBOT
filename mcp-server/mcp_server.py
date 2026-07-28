@@ -141,12 +141,22 @@ if __name__ == "__main__":
     import uvicorn
     from starlette.middleware.cors import CORSMiddleware
 
+    # `expose_headers` es imprescindible: el protocolo MCP Streamable HTTP
+    # asigna el ID de sesión devolviéndolo en el header de respuesta
+    # `Mcp-Session-Id` del `initialize`, y el cliente debe reenviarlo en cada
+    # request posterior. Por default, CORS oculta headers custom del lado
+    # JS del navegador salvo que se expongan explícitamente acá — sin esto,
+    # `curl` (que ignora CORS) funciona perfecto, pero un cliente real en el
+    # browser nunca llega a leer el header y falla con "Missing session ID"
+    # en el segundo request. Bug real encontrado probando el toggle "Usar
+    # MCP" desde el chatbot de verdad, no visible con curl.
     app = mcp.streamable_http_app()
     app = CORSMiddleware(
         app,
         allow_origins=["http://localhost:5173"],
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["mcp-session-id"],
     )
 
     # Port 8000 is FastMCP's own default (see `host`/`port` above) — kept

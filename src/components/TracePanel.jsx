@@ -91,6 +91,33 @@ function TraceEntry({ event }) {
     );
   }
 
+  // Fase 4: resources/prompt MCP verificados fuera de tools[] (los botones
+  // "Listar recursos MCP"/"Ver prompt 'format'" de Chatbot.jsx empujan estos
+  // eventos directamente, sin pasar por sendMessage). `event.error`, si está
+  // presente, viene del catch del handler correspondiente (servidor caído u
+  // otro fallo) — se muestra en el mismo <pre> en vez del resultado real.
+  if (event.type === "mcp_resource") {
+    return (
+      <div style={entryStyle}>
+        <div style={labelStyle}>📄 Resource MCP: {event.uri}</div>
+        <pre style={preStyle}>
+          {event.error ? `error: ${event.error}` : JSON.stringify(event.result, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
+  if (event.type === "mcp_prompt") {
+    return (
+      <div style={entryStyle}>
+        <div style={labelStyle}>📝 Prompt MCP: {event.name}</div>
+        <pre style={preStyle}>
+          {event.error ? `error: ${event.error}` : JSON.stringify(event.messages, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
   return null;
 }
 

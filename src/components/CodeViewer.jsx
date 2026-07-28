@@ -9,7 +9,7 @@ import thinkingFeatureRaw from "../features/thinking.js?raw";
 import thinkingPySnippet from "../snippets/thinking.py?raw";
 import documentsFeatureRaw from "../features/documents.js?raw";
 import documentsPySnippet from "../snippets/documents-citations.py?raw";
-import mcpNoteRaw from "../features/mcpNote.js?raw";
+import mcpFeatureRaw from "../features/mcp.js?raw";
 import mcpIntegrationPySnippet from "../snippets/mcp-integration.py?raw";
 
 // Splits raw source into labeled sections delimited by
@@ -61,16 +61,10 @@ const FEATURES = [
     jsxRaw: documentsFeatureRaw,
     pyRaw: documentsPySnippet,
   },
-  // Excepción al patrón "jsxRaw = código vivo importado por Chatbot.jsx": esta
-  // entrada no ejecuta MCP en el navegador (MCP local es stdio, un proceso
-  // hijo que un SPA no puede spawnear). jsxRaw acá es mcpNote.js, una nota
-  // explicativa en prosa (mismo formato de regions, sin JSX ni componentes
-  // fabricados) — el snippet Python (pyRaw) sí es código MCP real y ejecutable,
-  // tomado de 07 MCP/cli_project_COMPLETE/.
   {
     id: "mcp",
     label: "MCP",
-    jsxRaw: mcpNoteRaw, // ⚠️ excepción: NO es código vivo, ver comentario arriba
+    jsxRaw: mcpFeatureRaw,
     pyRaw: mcpIntegrationPySnippet,
   },
 ];

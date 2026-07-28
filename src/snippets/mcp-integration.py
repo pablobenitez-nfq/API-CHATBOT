@@ -1,15 +1,19 @@
-# MCP integration example — vidriera educativa de "07 MCP/cli_project_COMPLETE/",
-# NO ejecutable desde este chatbot (browser). Muestra, con extractos fieles
-# de las fuentes reales del curso, cómo una tool definida en un servidor MCP
-# (mcp_server.py) llega a un cliente MCP vía stdio (mcp_client.py) y termina
-# convertida al mismo shape {name, description, input_schema} que ya usa
-# TOOL_DEFINITION en src/features/toolUse.js (core/tools.py).
+# MCP integration example — fidelidad completa a las fuentes reales de
+# "07 MCP/cli_project_COMPLETE/" (mcp_server.py + mcp_client.py), curado
+# solo en el sentido de reusar el mismo chat()/add_user_message/
+# add_assistant_message que tool-use.py/web-search.py en vez de duplicarlos
+# con otro nombre. No es un extracto recortado: ambas tools, ambos
+# resources, el prompt, y la clase MCPClient completa están todos presentes,
+# sin placeholders ni TODOs.
 #
-# Scope note: reusa el mismo chat()/add_user_message/add_assistant_message
-# que tool-use.py/web-search.py. Recortado a UNA tool de ejemplo
-# (read_doc_contents): se excluyen edit_document, @mcp.resource y
-# @mcp.prompt del servidor real, y list_prompts/get_prompt/read_resource/
-# cleanup del cliente real — el foco es exclusivamente tool use vía MCP.
+# Nota de transporte: esta versión curada usa stdio (StdioServerParameters +
+# stdio_client), igual que las fuentes originales del curso — el servidor
+# real que corre este chatbot (`proyecto_react/mcp-server/mcp_server.py`)
+# usa Streamable HTTP en su lugar (ver src/features/mcp.js, pestaña JSX de
+# este mismo panel), porque un SPA en el navegador no puede spawnear un
+# proceso hijo por stdio. El código Python del server (tools/resources/
+# prompt) es idéntico en ambos casos; lo que cambia es únicamente el
+# transporte, documentado en ambos archivos fuente.
 
 # region: Imports y configuración del cliente
 from dotenv import load_dotenv
@@ -81,21 +85,23 @@ def chat(
 # endregion
 
 
-# region: Definición de la tool en el servidor MCP
-# Extracto de 07 MCP/cli_project_COMPLETE/mcp_server.py, recortado a UNA
-# tool (read_doc_contents) y a un subset de 3 documentos de ejemplo (el
-# dict `docs` real tiene 6 entradas). Se excluyen explícitamente
-# edit_document (segunda tool del server real), y por completo los dos
-# @mcp.resource y el @mcp.prompt — este snippet cubre solo tool use.
+# region: Servidor MCP — tools
+# Extracto literal de 07 MCP/cli_project_COMPLETE/mcp_server.py: las DOS
+# tools reales del servidor (read_doc_contents y edit_document), sin
+# recortes, sobre el dict `docs` completo (6 entradas).
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
+from mcp.server.fastmcp.prompts import base
 
 mcp = FastMCP("DocumentMCP", log_level="ERROR")
 
 docs = {
     "deposition.md": "This deposition covers the testimony of Angela Smith, P.E.",
     "report.pdf": "The report details the state of a 20m condenser tower.",
+    "financials.docx": "These financials outline the project's budget and expenditures.",
+    "outlook.pdf": "This document presents the projected future performance of the system.",
     "plan.md": "The plan outlines the steps for the project's implementation.",
+    "spec.txt": "These specifications define the technical requirements for the equipment.",
 }
 
 
@@ -103,34 +109,110 @@ docs = {
     name="read_doc_contents",
     description="Read the contents of a document and return it as a string.",
 )
-def read_document(doc_id: str = Field(description="Id of the document to read")):
+def read_document(
+    doc_id: str = Field(description="Id of the document to read"),
+):
+    if doc_id not in docs:
+        raise ValueError(f"Doc with id {doc_id} not found")
+
+    return docs[doc_id]
+
+
+@mcp.tool(
+    name="edit_document",
+    description="Edit a document by replacing a string in the documents content with a new string",
+)
+def edit_document(
+    doc_id: str = Field(description="Id of the document that will be edited"),
+    old_str: str = Field(
+        description="The text to replace. Must match exactly, including whitespace"
+    ),
+    new_str: str = Field(
+        description="The new text to insert in place of the old text"
+    ),
+):
+    if doc_id not in docs:
+        raise ValueError(f"Doc with id {doc_id} not found")
+
+    docs[doc_id] = docs[doc_id].replace(old_str, new_str)
+# endregion
+
+
+# region: Servidor MCP — resources
+# Extracto literal de 07 MCP/cli_project_COMPLETE/mcp_server.py: los DOS
+# resources reales — uno lista los ids de documento (JSON), el otro
+# devuelve el contenido de un documento puntual (texto plano), con el doc_id
+# interpolado en la URI vía el patrón `{doc_id}` de FastMCP.
+@mcp.resource("docs://documents", mime_type="application/json")
+def list_docs() -> list[str]:
+    return list(docs.keys())
+
+
+@mcp.resource("docs://documents/{doc_id}", mime_type="text/plain")
+def fetch_doc(doc_id: str) -> str:
     if doc_id not in docs:
         raise ValueError(f"Doc with id {doc_id} not found")
     return docs[doc_id]
 # endregion
 
 
-# region: Conexión del cliente MCP vía stdio
-# Extracto de 07 MCP/cli_project_COMPLETE/mcp_client.py, recortado a lo
-# esencial para tool use: __init__, connect() (spawnea el servidor como
-# proceso hijo del SO vía stdio), list_tools() y call_tool(). Se excluyen
-# list_prompts, get_prompt y read_resource (no usados en el ejemplo de
-# abajo). cleanup()/__aenter__()/__aexit__() SÍ se incluyen, recortados
-# pero fieles a la fuente real: sin ellos, el `async with MCPClient(...)`
-# del ejemplo de uso rompería en tiempo de ejecución (Python exige que la
-# clase implemente el protocolo de context manager asíncrono).
+# region: Servidor MCP — prompt
+# Extracto literal de 07 MCP/cli_project_COMPLETE/mcp_server.py: el prompt
+# `format`, un template reutilizable que el servidor ofrece (a diferencia de
+# una tool, no lo ejecuta el servidor — el cliente lo pide, arma el mensaje
+# resultante, y es el modelo quien decide qué hacer con él, típicamente
+# invocando la tool `edit_document`).
+@mcp.prompt(
+    name="format",
+    description="Rewrites the contents of the document in Markdown format.",
+)
+def format_document(
+    doc_id: str = Field(description="Id of the document to format"),
+) -> list[base.Message]:
+    prompt = f"""
+    Your goal is to reformat a document to be written with markdown syntax.
+
+    The id of the document you need to reformat is:
+    <document_id>
+    {doc_id}
+    </document_id>
+
+    Add in headers, bullet points, tables, etc as necessary. Feel free to add in extra text, but don't change the meaning of the report.
+    Use the 'edit_document' tool to edit the document. After the document has been edited, respond with the final version of the doc. Don't explain your changes.
+    """
+
+    return [base.UserMessage(prompt)]
+# endregion
+
+
+# region: Cliente MCP completo
+# Extracto literal de 07 MCP/cli_project_COMPLETE/mcp_client.py: la clase
+# MCPClient COMPLETA, sin recortes — connect, list_tools, call_tool,
+# list_prompts, get_prompt, read_resource, cleanup, y el ciclo de contexto
+# asíncrono __aenter__/__aexit__ (requerido: sin esto, `async with
+# MCPClient(...)` en el ejemplo de uso de más abajo falla en tiempo de
+# ejecución porque la clase no implementaría el protocolo de context manager
+# asíncrono).
+import json
+from typing import Any, Optional
 from contextlib import AsyncExitStack
+from pydantic import AnyUrl
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
 
 class MCPClient:
-    def __init__(self, command, args, env=None):
+    def __init__(
+        self,
+        command: str,
+        args: list[str],
+        env: Optional[dict] = None,
+    ):
         self._command = command
         self._args = args
         self._env = env
-        self._session = None
-        self._exit_stack = AsyncExitStack()
+        self._session: Optional[ClientSession] = None
+        self._exit_stack: AsyncExitStack = AsyncExitStack()
 
     async def connect(self):
         server_params = StdioServerParameters(
@@ -147,12 +229,39 @@ class MCPClient:
         )
         await self._session.initialize()
 
+    def session(self) -> ClientSession:
+        if self._session is None:
+            raise ConnectionError(
+                "Client session not initialized or cache not populated. Call connect_to_server first."
+            )
+        return self._session
+
     async def list_tools(self) -> list[types.Tool]:
-        result = await self._session.list_tools()
+        result = await self.session().list_tools()
         return result.tools
 
-    async def call_tool(self, tool_name, tool_input):
-        return await self._session.call_tool(tool_name, tool_input)
+    async def call_tool(
+        self, tool_name: str, tool_input
+    ) -> types.CallToolResult | None:
+        return await self.session().call_tool(tool_name, tool_input)
+
+    async def list_prompts(self) -> list[types.Prompt]:
+        result = await self.session().list_prompts()
+        return result.prompts
+
+    async def get_prompt(self, prompt_name, args: dict[str, str]):
+        result = await self.session().get_prompt(prompt_name, args)
+        return result.messages
+
+    async def read_resource(self, uri: str) -> Any:
+        result = await self.session().read_resource(AnyUrl(uri))
+        resource = result.contents[0]
+
+        if isinstance(resource, types.TextResourceContents):
+            if resource.mimeType == "application/json":
+                return json.loads(resource.text)
+
+            return resource.text
 
     async def cleanup(self):
         await self._exit_stack.aclose()
@@ -193,10 +302,12 @@ class ToolManager:
 
 
 # region: Ejemplo de uso
-# Flujo end-to-end, paralelo directo del loop de tool-use.py. La diferencia
-# clave: execute_tool() (función local) se reemplaza por client.call_tool()
-# (llamada MCP al proceso servidor vía stdio) — el resto del loop
-# (stop_reason == "tool_use", agregar tool_result, repetir) es idéntico.
+# Flujo end-to-end: conecta al servidor MCP real (spawneado como proceso
+# hijo vía stdio), descubre sus tools, corre el mismo loop de tool-use.py
+# (execute_tool() local se reemplaza por client.call_tool(), una llamada MCP
+# real al proceso servidor) y además ejercita resources y el prompt
+# `format` — las dos primitivas que tool-use.py no cubre porque no tiene
+# noción de servidor MCP.
 #
 # `async with`/`await` no son válidos a nivel de módulo en un script .py
 # real (a diferencia de un notebook, que sí soporta top-level await) — por
@@ -209,8 +320,19 @@ async def main():
     async with MCPClient(command="python", args=["mcp_server.py"]) as client:
         tools = await ToolManager.get_all_tools({"docs": client})
 
+        # Resources: listar los ids de documento disponibles, y leer el
+        # contenido de uno puntual.
+        doc_ids = await client.read_resource("docs://documents")
+        first_doc = await client.read_resource(f"docs://documents/{doc_ids[0]}")
+        print(f"Documentos disponibles: {doc_ids}")
+        print(f"Contenido de {doc_ids[0]}: {first_doc}")
+
+        # Prompt: pedirle al servidor el template `format` para un
+        # documento puntual, y usarlo como mensaje inicial del chat.
+        prompt_messages = await client.get_prompt("format", {"doc_id": doc_ids[0]})
+
         messages = []
-        add_user_message(messages, "¿Qué dice el documento plan.md?")
+        add_user_message(messages, prompt_messages[0].content.text)
 
         response = chat(messages, tools=tools)
         add_assistant_message(messages, response)

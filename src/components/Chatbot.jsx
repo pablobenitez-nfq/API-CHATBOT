@@ -4,7 +4,15 @@ import { TOOL_DEFINITION, executeTool } from "../features/toolUse.js";
 import { buildWebSearchTool } from "../features/webSearch.js";
 import { buildThinkingParam } from "../features/thinking.js";
 import { guardAttachment, toContentBlock } from "../features/documents.js";
-import { connectMcp, listMcpTools, callMcpTool, disconnectMcp } from "../features/mcp.js";
+import {
+  connectMcp,
+  listMcpTools,
+  callMcpTool,
+  disconnectMcp,
+  readMcpResource,
+  listMcpPrompts,
+  getMcpPrompt,
+} from "../features/mcp.js";
 import { ToolStep, ThinkingBlock, CitationList } from "./MessageBlocks.jsx";
 import TracePanel from "./TracePanel.jsx";
 
@@ -383,6 +391,17 @@ const removeAttachmentButtonStyle = {
   backgroundColor: "#f0f0f0",
   cursor: "pointer",
 };
+
+// Fase 4: botones "Listar recursos MCP"/"Ver prompt 'format'", mismo look
+// que removeAttachmentButtonStyle pero un poco más grandes para que se lean
+// bien junto a los checkboxes de la fila de toggles.
+const mcpActionButtonStyle = {
+  padding: "4px 10px",
+  fontSize: "13px",
+  borderRadius: "5px",
+  border: "1px solid #ccc",
+  backgroundColor: "#f0f0f0",
+};
 // endregion
 
 // region: Formato de fuentes citadas (Fase 5, extendido a web search + cited_text)
@@ -474,6 +493,60 @@ export default function Chatbot() {
       mcpClientRef.current = null;
     };
   }, [mcp]);
+
+  // Fase 4: resources/prompt MCP verificables FUERA de tools[] — la API de
+  // Claude no tiene noción de resources/prompts, así que estos dos botones
+  // no pasan por sendMessage: llaman directo al cliente MCP ya conectado
+  // (mismo `mcpClientRef` que usa sendMessage) y empujan el resultado a
+  // `trace` para que TracePanel lo muestre con el mismo patrón que el resto
+  // de los eventos. Ambos handlers arrancan con el mismo guard: si
+  // `mcpClientRef.current` es null (toggle apagado, todavía conectando, o
+  // `connectMcp()` falló), no intentan la llamada — muestran un error claro
+  // vía el mismo `mcpError` que ya usa el banner de conexión, en vez de
+  // dejar que la promesa explote sin manejar. Los botones además se ocultan
+  // por completo cuando `mcp` está apagado (ver JSX más abajo), así que este
+  // guard sólo dispara en la ventana angosta donde `mcp` está prendido pero
+  // la conexión todavía no resolvió (o falló).
+  async function handleListMcpResources() {
+    const client = mcpClientRef.current;
+    if (!client) {
+      setMcpError("Servidor MCP no conectado todavía. Esperá a que el toggle \"Usar MCP\" termine de conectar.");
+      return;
+    }
+
+    try {
+      const result = await readMcpResource(client, "docs://documents");
+      setTrace((prev) => [...prev, { type: "mcp_resource", uri: "docs://documents", result }]);
+    } catch (err) {
+      setTrace((prev) => [
+        ...prev,
+        { type: "mcp_resource", uri: "docs://documents", error: err.message || "Fallo al leer el resource MCP." },
+      ]);
+    }
+  }
+
+  // `doc_id: "plan.md"` es un id fijo de ejemplo (documento real del `docs`
+  // dict del servidor, ver mcp-server/mcp_server.py) — el prompt `format`
+  // exige un `doc_id` como argumento y este botón es una demo puntual, no un
+  // selector de documento.
+  async function handleShowFormatPrompt() {
+    const client = mcpClientRef.current;
+    if (!client) {
+      setMcpError("Servidor MCP no conectado todavía. Esperá a que el toggle \"Usar MCP\" termine de conectar.");
+      return;
+    }
+
+    try {
+      await listMcpPrompts(client);
+      const messages = await getMcpPrompt(client, "format", { doc_id: "plan.md" });
+      setTrace((prev) => [...prev, { type: "mcp_prompt", name: "format", messages }]);
+    } catch (err) {
+      setTrace((prev) => [
+        ...prev,
+        { type: "mcp_prompt", name: "format", error: err.message || "Fallo al pedir el prompt MCP." },
+      ]);
+    }
+  }
 
   // "Solo código" y "Thinking" son mutuamente excluyentes: combinarlos da un
   // 400 real de la API (el prefill "```" del turno assistant viola el
@@ -632,6 +705,35 @@ export default function Chatbot() {
               />
               Usar MCP (servidor real)
             </label>
+
+            {mcp && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleListMcpResources}
+                  disabled={!!mcpError}
+                  style={{
+                    ...mcpActionButtonStyle,
+                    cursor: mcpError ? "not-allowed" : "pointer",
+                    opacity: mcpError ? 0.6 : 1,
+                  }}
+                >
+                  Listar recursos MCP
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShowFormatPrompt}
+                  disabled={!!mcpError}
+                  style={{
+                    ...mcpActionButtonStyle,
+                    cursor: mcpError ? "not-allowed" : "pointer",
+                    opacity: mcpError ? 0.6 : 1,
+                  }}
+                >
+                  Ver prompt "format"
+                </button>
+              </>
+            )}
           </div>
 
           <div style={{ marginBottom: "15px" }}>
